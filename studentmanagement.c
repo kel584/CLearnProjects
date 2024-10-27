@@ -14,6 +14,15 @@ int ID;
 
 struct Student* students;
 
+char* lowerString(char* string){
+for(int i = 0; string[i]; i++){
+  string[i] = tolower(string[i]);
+}
+
+return string;
+
+}
+
 void saveContent(){
     FILE *fptr;
     fptr = fopen("student_data.txt", "w");
@@ -33,8 +42,42 @@ void saveContent(){
 
 
 
-void searchStudents(){
+void searchStudents(char key[100]){    
 //add search feature that'll loop through the student array and their elements.
+int* found = NULL;  
+int arrayCounter = 0;
+int capacity = 10;  
+
+
+found = (int*)malloc(capacity * sizeof(int));
+if (found == NULL) {
+    fprintf(stderr, "Memory allocation failed\n");
+    return;
+}
+
+for (int i = 0; i < studentCount; i++) {
+        char tempName[100];
+        strncpy(tempName, students[i].name, sizeof(tempName));
+        tempName[sizeof(tempName) - 1] = '\0';
+
+        if (strcmp(lowerString(tempName), lowerString(key)) == 0) {
+            if (arrayCounter >= capacity) {
+                capacity *= 2;  
+                found = (int*)realloc(found, capacity * sizeof(int));  
+                if (found == NULL) {
+                    fprintf(stderr, "Memory reallocation failed\n");
+                    return;
+                }
+            }
+            found[arrayCounter] = i;
+            arrayCounter++;
+        }
+    }
+
+for (int i = 0; i < arrayCounter; i++) {  
+    printf("Student %d, Name: %s, Score: %d, ID: %d\n", found[i], students[found[i]].name, students[found[i]].score, students[found[i]].ID);
+}
+
 }
 
 struct Student* reallocate_student_array(struct Student* array, int elementcount) {
@@ -136,7 +179,12 @@ void checkInputs(char userinput[50]){
         loadContent();
     }
     if(strcmp(userinput, "search") == 0){
-        
+        char key[100];
+        printf("Enter a name to search through: ");
+        getchar();
+        fgets(key, sizeof(key), stdin);
+        key[strcspn(key, "\n")] = '\0';
+        searchStudents(key);
     }     
     if(strcmp(userinput, "exit") == 0){
         printf("Exiting the program.\n");
