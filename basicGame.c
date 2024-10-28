@@ -1,6 +1,7 @@
 #include "raylib.h"
 #include "raymath.h"
 #include <math.h>
+#include "rlgl.h"
 
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
@@ -13,24 +14,81 @@ typedef struct {
 } Camera3DController;
 
 typedef struct {
-    Vector3 vertices[8];
+    Vector3 position;    // Current position
+    Vector3 targetPos;   // Final unfolded position
+    Vector3 rotation;    // Current rotation angles (x, y, z)
+    Vector3 targetRot;   // Final rotation angles
+    Vector3 foldedPos;   // Position in folded state
+    Vector3 foldedRot;   // Rotation in folded state
+    Color color;         // Face color
+    float progress;      // Animation progress (0.0 to 1.0)
+} CubeFace;
+
+typedef struct {
+    CubeFace faces[6];  // 0:Up, 1:Down, 2:Left, 3:Front, 4:Right, 5:Back
     bool unfolded;
-    float unfoldProgress;
+    float animationSpeed;
 } Cube;
 
 void InitializeCube(Cube* cube) {
-    float size = 1.0f;
-    cube->vertices[0] = (Vector3){ -size, -size, -size };
-    cube->vertices[1] = (Vector3){ size, -size, -size };
-    cube->vertices[2] = (Vector3){ size, size, -size };
-    cube->vertices[3] = (Vector3){ -size, size, -size };
-    cube->vertices[4] = (Vector3){ -size, -size, size };
-    cube->vertices[5] = (Vector3){ size, -size, size };
-    cube->vertices[6] = (Vector3){ size, size, size };
-    cube->vertices[7] = (Vector3){ -size, size, size };
-    
+    const float size = 1.0f;  // Half-size of cube faces
+    const float spacing = 2.1f;
     cube->unfolded = false;
-    cube->unfoldProgress = 0.0f;
+    cube->animationSpeed = 0.02f;
+    
+    // Initialize all faces
+    Color colors[6] = { WHITE, YELLOW, ORANGE, GREEN, RED, BLUE };
+    
+    // Folded positions (forming a cube)
+    Vector3 foldedPositions[6] = {
+        (Vector3){ 0.0f, size, 0.0f },    // Up (top face)
+        (Vector3){ 0.0f, -size, 0.0f },   // Down (bottom face)
+        (Vector3){ -size, 0.0f, 0.0f },   // Left
+        (Vector3){ 0.0f, 0.0f, size },    // Front
+        (Vector3){ size, 0.0f, 0.0f },    // Right
+        (Vector3){ 0.0f, 0.0f, -size },   // Back
+    };
+    
+    // Folded rotations
+    Vector3 foldedRotations[6] = {
+        (Vector3){ 0.0f, 0.0f, 0.0f },      // Up
+        (Vector3){ 180.0f, 0.0f, 0.0f },    // Down
+        (Vector3){ 0.0f, 0.0f, -90.0f },    // Left
+        (Vector3){ 90.0f, 0.0f, 0.0f },     // Front
+        (Vector3){ 0.0f, 0.0f, 90.0f },     // Right
+        (Vector3){ -90.0f, 0.0f, 0.0f }     // Back
+    };
+    
+    // Unfolded positions (flat layout)
+    Vector3 unfoldedPositions[6] = {
+        (Vector3){ 0.0f, 0.0f, -spacing },      // Up
+        (Vector3){ 0.0f, 0.0f, spacing },       // Down
+        (Vector3){ -spacing, 0.0f, 0.0f },      // Left
+        (Vector3){ 0.0f, 0.0f, 0.0f },          // Front
+        (Vector3){ spacing, 0.0f, 0.0f },       // Right
+        (Vector3){ spacing * 2, 0.0f, 0.0f }    // Back
+    };
+    
+    // Unfolded rotations (flat)
+    Vector3 unfoldedRotations[6] = {
+        (Vector3){ 0.0f, 0.0f, 0.0f },    // Up
+        (Vector3){ 0.0f, 0.0f, 0.0f },    // Down
+        (Vector3){ 0.0f, 0.0f, 0.0f },    // Left
+        (Vector3){ 0.0f, 0.0f, 0.0f },    // Front
+        (Vector3){ 0.0f, 0.0f, 0.0f },    // Right
+        (Vector3){ 0.0f, 0.0f, 0.0f }     // Back
+    };
+    
+    for (int i = 0; i < 6; i++) {
+        cube->faces[i].foldedPos = foldedPositions[i];
+        cube->faces[i].foldedRot = foldedRotations[i];
+        cube->faces[i].position = foldedPositions[i];
+        cube->faces[i].targetPos = unfoldedPositions[i];
+        cube->faces[i].rotation = foldedRotations[i];
+        cube->faces[i].targetRot = unfoldedRotations[i];
+        cube->faces[i].color = colors[i];
+        cube->faces[i].progress = 0.0f;
+    }
 }
 
 void UpdateCameraController(Camera3D* camera, Camera3DController* controller) {
@@ -54,48 +112,71 @@ void UpdateCameraController(Camera3D* camera, Camera3DController* controller) {
     camera->up = (Vector3){ 0.0f, 1.0f, 0.0f };
 }
 
-void RenderCustomCube(Cube* cube) {
-    Color faces[6] = {
-        WHITE,  // Up (U)
-        YELLOW, // Down (D)
-        ORANGE, // Left (L)
-        GREEN,  // Front (F)
-        RED,    // Right (R)
-        BLUE    // Back (B)
+Vector3 LerpVector3(Vector3 start, Vector3 end, float t) {
+    return (Vector3){
+        start.x + (end.x - start.x) * t,
+        start.y + (end.y - start.y) * t,
+        start.z + (end.z - start.z) * t
     };
+}
+
+void UpdateCube(Cube* cube) {
+    if (IsKeyPressed(KEY_SPACE)) {
+        cube->unfolded = !cube->unfolded;
+    }
     
-    if (!cube->unfolded) {
-        // Draw regular cube
-        DrawCubeV((Vector3){0,0,0}, (Vector3){2,2,2}, WHITE);
-        DrawCubeWiresV((Vector3){0,0,0}, (Vector3){2,2,2}, BLACK);
-    } else {
-        float progress = cube->unfoldProgress;
-        float spacing = 2.1f; // Slight gap between faces
-        float height = 2.0f * (1.0f - progress); // Height for folded faces
+    for (int i = 0; i < 6; i++) {
+        float delayOffset = i * 0.2f;
         
-        // Face positions in unfolded state (on XZ plane)
-        Vector3 positions[6] = {
-            (Vector3){0, 0, -spacing},     // Up
-            (Vector3){0, 0, spacing},      // Down
-            (Vector3){-spacing, 0, 0},     // Left
-            (Vector3){0, 0, 0},           // Front (center)
-            (Vector3){spacing, 0, 0},      // Right
-            (Vector3){spacing * 2, 0, 0}   // Back
-        };
-        
-        // Draw each face
-        for (int i = 0; i < 6; i++) {
-            Vector3 pos = positions[i];
-            pos.y = height * 0.5f; // Adjust height during animation
-            
-            DrawCubeV(pos, (Vector3){2.0f, 0.1f, 2.0f}, faces[i]);
-            DrawCubeWiresV(pos, (Vector3){2.0f, 0.1f, 2.0f}, BLACK);
+        if (cube->unfolded) {
+            if (cube->faces[i].progress < 1.0f && GetTime() > delayOffset) {
+                cube->faces[i].progress += cube->animationSpeed;
+                if (cube->faces[i].progress > 1.0f) cube->faces[i].progress = 1.0f;
+            }
+        } else {
+            if (cube->faces[i].progress > 0.0f && GetTime() > delayOffset) {
+                cube->faces[i].progress -= cube->animationSpeed;
+                if (cube->faces[i].progress < 0.0f) cube->faces[i].progress = 0.0f;
+            }
         }
+        
+        // Smooth step interpolation
+        float t = cube->faces[i].progress;
+        t = t * t * (3.0f - 2.0f * t);
+        
+        // Interpolate between folded and unfolded states
+        cube->faces[i].position = LerpVector3(
+            cube->faces[i].foldedPos,
+            cube->faces[i].targetPos,
+            t
+        );
+        
+        cube->faces[i].rotation = LerpVector3(
+            cube->faces[i].foldedRot,
+            cube->faces[i].targetRot,
+            t
+        );
+    }
+}
+
+void RenderCustomCube(Cube* cube) {
+    for (int i = 0; i < 6; i++) {
+        CubeFace* face = &cube->faces[i];
+        
+        rlPushMatrix();
+            rlTranslatef(face->position.x, face->position.y, face->position.z);
+            rlRotatef(face->rotation.x, 1, 0, 0);
+            rlRotatef(face->rotation.y, 0, 1, 0);
+            rlRotatef(face->rotation.z, 0, 0, 1);
+            
+            DrawCube((Vector3){0, 0, 0}, 2.0f, 0.1f, 2.0f, face->color);
+            DrawCubeWires((Vector3){0, 0, 0}, 2.0f, 0.1f, 2.0f, BLACK);
+        rlPopMatrix();
     }
 }
 
 int main() {
-    InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "3D Cube Viewer");
+    InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "3D Cube Unfolding Animation");
     SetTargetFPS(60);
     
     Camera3D camera = { 0 };
@@ -117,29 +198,19 @@ int main() {
     
     while (!WindowShouldClose()) {
         UpdateCameraController(&camera, &controller);
-        
-        if (IsKeyPressed(KEY_SPACE)) {
-            cube.unfolded = !cube.unfolded;
-        }
-        
-        if (cube.unfolded && cube.unfoldProgress < 1.0f) {
-            cube.unfoldProgress += 0.05f;
-        } else if (!cube.unfolded && cube.unfoldProgress > 0.0f) {
-            cube.unfoldProgress -= 0.05f;
-        }
+        UpdateCube(&cube);
         
         BeginDrawing();
-        ClearBackground(RAYWHITE);
-        
-        BeginMode3D(camera);
-        RenderCustomCube(&cube);
-        DrawGrid(20, 1.0f);
-        EndMode3D();
-        
-        DrawText("Left mouse button to rotate", 10, 10, 20, DARKGRAY);
-        DrawText("Mouse wheel to zoom", 10, 35, 20, DARKGRAY);
-        DrawText("Space to unfold/fold cube", 10, 60, 20, DARKGRAY);
-        
+            ClearBackground(RAYWHITE);
+            
+            BeginMode3D(camera);
+                RenderCustomCube(&cube);
+                DrawGrid(20, 1.0f);
+            EndMode3D();
+            
+            DrawText("Left mouse button to rotate", 10, 10, 20, DARKGRAY);
+            DrawText("Mouse wheel to zoom", 10, 35, 20, DARKGRAY);
+            DrawText("Space to unfold/fold cube", 10, 60, 20, DARKGRAY);
         EndDrawing();
     }
     
